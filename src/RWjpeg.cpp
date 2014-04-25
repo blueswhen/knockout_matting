@@ -1,34 +1,45 @@
 // Copyright 2014-4 sxniu
-
-#include "RWjpeg.h"
+#include "include/RWjpeg.h"
+#include "include/ImageData.h"
 #include <stdio.h>
 #include <jpeglib.h>
 
-RWjpeg::RWjpeg(const char* file_name) 
-  : m_file_name(file_name)
-  , m_width(0)
-  , m_height(0)
-  , m_components(0)
-  , m_image_data(new std::vector<int>(0)) {
-  Read();
+#define COMPONENTS 3
+
+RWjpeg::RWjpeg(ImageData* image_data)
+  : m_image_data(image_data) {
+  if (image_data->m_file_name == NULL) {
+    printf("error: file name is null, this image data is empty\n");
+    exit(1);
+  }
 }
 
-RWjpeg::~RWjpeg() {
-  if (m_image_data != NULL) {
-    delete m_image_data;
-    m_image_data = NULL;
+RWjpeg::RWjpeg(const char* file_name, ImageData* image_data) 
+  : m_image_data(image_data) {
+  // image_data is empty
+  if (m_image_data->m_file_name == NULL) {
+    m_image_data->m_file_name = file_name;
+    Read();
+  } else {
+    printf("error: this image data is not empty\n");
+    exit(1);
   }
 }
 
 void RWjpeg::Read() {
+  const char* file_name = m_image_data->m_file_name;
+  int& width = m_image_data->m_width;
+  int& height = m_image_data->m_height;
+  std::vector<int>* data = m_image_data->m_data;
+
   struct jpeg_decompress_struct jpeg_decompress;
   struct jpeg_error_mgr decompress_error;
   jpeg_decompress.err = jpeg_std_error(&decompress_error);
   jpeg_create_decompress(&jpeg_decompress);
 
   FILE* in_file;
-  if ((in_file = fopen(m_file_name, "rb")) == NULL) { 
-    fprintf(stderr, "can't open %s\n", m_file_name);
+  if ((in_file = fopen(file_name, "rb")) == NULL) { 
+    fprintf(stderr, "can't open %s\n", file_name);
     exit(1);
   }
 
@@ -36,25 +47,24 @@ void RWjpeg::Read() {
   jpeg_read_header(&jpeg_decompress, TRUE);
   jpeg_start_decompress(&jpeg_decompress);
 
-  m_width = jpeg_decompress.output_width;
-  m_height = jpeg_decompress.output_height;
-  m_components = jpeg_decompress.output_components;
+  width = jpeg_decompress.output_width;
+  height = jpeg_decompress.output_height;
 
-  unsigned char* buffer_src = new unsigned char[m_height * m_width * m_components];
+  unsigned char* buffer_src = new unsigned char[height * width * COMPONENTS];
 
-  while (jpeg_decompress.output_scanline < m_height) {
-      unsigned char* src_adress = buffer_src + m_components * m_width *
+  while (jpeg_decompress.output_scanline < height) {
+      unsigned char* src_adress = buffer_src + COMPONENTS * width *
                                   jpeg_decompress.output_scanline;
       jpeg_read_scanlines(&jpeg_decompress, &src_adress, 1);
   }
 
-  for (int y = 0; y < m_height; ++y) {
-    for (int x = 0; x < m_width * m_components; x+= m_components) {
-      int index = y * m_width * m_components + x;
+  for (int y = 0; y < height; ++y) {
+    for (int x = 0; x < width * COMPONENTS; x += COMPONENTS) {
+      int index = y * width * COMPONENTS + x;
       int colour = (static_cast<int>(buffer_src[index]) << 16) +
                    (static_cast<int>(buffer_src[index + 1]) << 8) +
                    (static_cast<int>(buffer_src[index + 2]));
-      m_image_data->push_back(colour);
+      data->push_back(colour);
     }
   }
 
@@ -64,6 +74,10 @@ void RWjpeg::Read() {
 }
 
 void RWjpeg::Save(const char* out_file_name) {
+  int width = m_image_data->m_width;
+  int height = m_image_data->m_height;
+  const std::vector<int>* data = m_image_data->m_data;
+
   struct jpeg_compress_struct jpeg_compress;
   struct jpeg_error_mgr jpeg_error;
   jpeg_compress.err = jpeg_std_error(&jpeg_error);
@@ -76,19 +90,19 @@ void RWjpeg::Save(const char* out_file_name) {
   }
   jpeg_stdio_dest(&jpeg_compress, out_file);
 
-  jpeg_compress.image_width = m_width;
-  jpeg_compress.image_height = m_height;
-  jpeg_compress.input_components = m_components;
+  jpeg_compress.image_width = width;
+  jpeg_compress.image_height = height;
+  jpeg_compress.input_components = COMPONENTS;
 
   jpeg_compress.in_color_space = JCS_RGB; 	/* colorspace of input image */
   jpeg_set_defaults(&jpeg_compress);
   jpeg_start_compress(&jpeg_compress, TRUE);
-  unsigned char* buffer_dest = new unsigned char[m_height * m_width * m_components];
+  unsigned char* buffer_dest = new unsigned char[height * width * COMPONENTS];
 
-  for (int y = 0; y < m_height; ++y) {
-    for (int x = 0; x < m_width; ++x) {
-      int buffer_index = y * m_width * m_components + x * m_components;
-      int colour = (*m_image_data)[y* m_width + x];
+  for (int y = 0; y < height; ++y) {
+    for (int x = 0; x < width; ++x) {
+      int buffer_index = y * width * COMPONENTS + x * COMPONENTS;
+      int colour = (*data)[y* width + x];
       buffer_dest[buffer_index] =
         static_cast<unsigned char>((colour & 0x00ff0000) >> 16);
       buffer_dest[buffer_index + 1] =
@@ -98,9 +112,9 @@ void RWjpeg::Save(const char* out_file_name) {
     }
   }
 
-  while (jpeg_compress.next_scanline < jpeg_compress.image_height) {
-      unsigned char* dest_adress = buffer_dest  + m_components *
-                                   m_width * jpeg_compress.next_scanline;
+  while (jpeg_compress.next_scanline < height) {
+      unsigned char* dest_adress = buffer_dest  + COMPONENTS *
+                                   width * jpeg_compress.next_scanline;
       jpeg_write_scanlines(&jpeg_compress, &dest_adress, 1);
   }
   delete [] buffer_dest;
@@ -108,55 +122,14 @@ void RWjpeg::Save(const char* out_file_name) {
   fclose(out_file);
 }
 
-int RWjpeg::GetWidth() {
-  return m_width;
-}
-
-int RWjpeg::GetHeight() {
-  return m_height;
-}
-
-bool RWjpeg::IsIndexValid(int index) {
-  if (index >= 0 && index < m_width * m_height) {
-    return true;
-  }
-  printf("error: index is valid\n");
-  return false;
-}
-
-int RWjpeg::GetPixel(int index) {
-  if (IsIndexValid(index)) {
-    return (*m_image_data)[index];
-  }
-  printf("error: pixel can not be found by the index\n");
-  return 0;
-}
-
-const std::vector<int>* RWjpeg::GetImageData() {
-  return m_image_data;
-}
-
-void RWjpeg::UpdateImageData(const std::vector<int>& image_data) {
-  if (&image_data != m_image_data) {
-    delete m_image_data;
-    m_image_data = new std::vector<int>(image_data);
-  }
-}
-
-void RWjpeg::SetPixel(int index, int colour) {
-  if (IsIndexValid(index)) {
-    (*m_image_data)[index] = colour;
-    return;
-  }
-  printf("error: pixel can not be found by the index\n");
-}
-
 void RWjpeg::SetAlpha(const std::vector<int>& alpha_map) {
-  int size = m_image_data->size();
+  int size = m_image_data->m_data->size();
+  std::vector<int>& data = *(m_image_data->m_data);
+
   if (size == alpha_map.size()) {
     for (int i = 0; i < size; ++i) {
-      (*m_image_data)[i] &= 0x00ffffff;
-      (*m_image_data)[i] += (alpha_map[i] & 0xff000000);
+      data[i] &= 0x00ffffff;
+      data[i] += (alpha_map[i] & 0xff000000);
     }
   }
 }
