@@ -1,7 +1,9 @@
 // Copyright 2014-4 sxniu
 #include "include/RWjpeg.h"
 #include "include/ImageData.h"
+#include <vector>
 #include <stdio.h>
+#include <stdlib.h>
 #include <jpeglib.h>
 
 #define COMPONENTS 3
@@ -77,6 +79,10 @@ void RWjpeg::Save(const char* out_file_name) {
   int width = m_image_data->m_width;
   int height = m_image_data->m_height;
   const std::vector<int>* data = m_image_data->m_data;
+  if (data == NULL) {
+    printf("error: image data is empty");
+    return;
+  }
 
   struct jpeg_compress_struct jpeg_compress;
   struct jpeg_error_mgr jpeg_error;
@@ -120,16 +126,4 @@ void RWjpeg::Save(const char* out_file_name) {
   delete [] buffer_dest;
   jpeg_finish_compress(&jpeg_compress);
   fclose(out_file);
-}
-
-void RWjpeg::SetAlpha(const std::vector<int>& alpha_map) {
-  int size = m_image_data->m_data->size();
-  std::vector<int>& data = *(m_image_data->m_data);
-
-  if (size == alpha_map.size()) {
-    for (int i = 0; i < size; ++i) {
-      data[i] &= 0x00ffffff;
-      data[i] += (alpha_map[i] & 0xff000000);
-    }
-  }
 }

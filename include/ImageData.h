@@ -11,14 +11,14 @@ class ImageData {
   ImageData();
   ImageData(const ImageData& image_data);
   ~ImageData();
-  const char* GetFileName();
-  int GetWidth();
-  int GetHeight();
-  int GetPixel(int index);
+  const char* GetFileName() const;
+  int GetWidth() const;
+  int GetHeight() const;
+  int GetPixel(int index) const;
   void SetPixel(int index, int colour);
 
  private:
-  bool IsIndexValid(int index);
+  bool IsIndexValid(int index) const;
   const char* m_file_name;
   int m_width;
   int m_height;

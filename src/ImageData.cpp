@@ -15,25 +15,26 @@ ImageData::ImageData(const ImageData& image_data)
   , m_data(new std::vector<int>(*(image_data.m_data))) {}
 
 ImageData::~ImageData() {
+  m_file_name = NULL;
   if (m_data != NULL) {
     delete m_data;
     m_data = NULL;
   }
 }
 
-const char* ImageData::GetFileName() {
+const char* ImageData::GetFileName() const {
   return m_file_name;
 }
 
-int ImageData::GetWidth() {
+int ImageData::GetWidth() const {
   return m_width;
 }
 
-int ImageData::GetHeight() {
+int ImageData::GetHeight() const {
   return m_height;
 }
 
-int ImageData::GetPixel(int index) {
+int ImageData::GetPixel(int index) const {
   if (IsIndexValid(index)) {
     return (*m_data)[index];
   }
@@ -49,8 +50,8 @@ void ImageData::SetPixel(int index, int colour) {
   printf("error: set pixel failed\n");
 }
 
-bool ImageData::IsIndexValid(int index) {
-  if (index > 0 && index < m_width * m_height) {
+bool ImageData::IsIndexValid(int index) const {
+  if (index >= 0 && index < m_width * m_height) {
     return true;
   }
   printf("error: the index is invalid\n");

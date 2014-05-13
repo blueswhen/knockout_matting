@@ -1,8 +1,6 @@
 // Copyright 2014-4 sxniu
 #ifndef  INCLUDE_RWJPEG_H_
 #define  INCLUDE_RWJPEG_H_
-#include <vector>
-#include <stdlib.h>
 
 class ImageData;
 
@@ -15,7 +13,6 @@ class RWjpeg {
   RWjpeg(const char* file_name, ImageData* image_data);
   ~RWjpeg() {}
   void Save(const char* out_file_name);
-  void SetAlpha(const std::vector<int>& alpha_map);
 
  private:
   void Read();
