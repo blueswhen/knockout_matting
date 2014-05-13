@@ -2,12 +2,57 @@
 #include "include/utils.h"
 #include <stdio.h>
 #include "include/ImageData.h"
+#include "include/region_filling_by_edge_tracing.h"
+#include "include/colour.h"
 
-#define RED 0x00ff0000
-#define GREEN 0x0000ff00
-#define BLUE 0x000000ff
+#define FILLING_COLOUR RED
 
 namespace utils {
+
+void GetTrimap(ImageData* image) {
+  int height = image->GetHeight();
+  int width = image->GetWidth();
+
+  int* image_data = new int[width * height];
+  for (int y = 0; y < height; ++y) {
+    for (int x = 0; x < width; ++x) {
+      int index = y * width + x;
+      image_data[index] = image->GetPixel(index);
+    }
+  }
+
+  region_filling_by_edge_tracing::RegionFillingByEdgeTracing(
+    image_data, width, height, FILLING_COLOUR);
+
+  for (int y = 0; y < height; ++y) {
+    for (int x = 0; x < width; ++x) {
+      int index = y * width + x;
+      if (image_data[index] == WHITE) {
+        image->SetPixel(index, GRAY);
+      } else if(image_data[index] == FILLING_COLOUR) {
+        image->SetPixel(index, WHITE);
+      }
+    }
+  }
+}
+
+void GetBand(ImageData* image) {
+  int height = image->GetHeight();
+  int width = image->GetWidth();
+  for (int y = 0; y < height; ++y) {
+    for (int x  = 0; x < width; ++x) {
+      int index = y * width + x;
+      int red = (image->GetPixel(index) & RED) >> 16;
+      int green = (image->GetPixel(index) & GREEN) >> 8;
+      int blue = image->GetPixel(index) & BLUE;
+      if (red < 60 && green < 60 && blue > 180) {
+        image->SetPixel(index, WHITE);
+      } else {
+        image->SetPixel(index, BLACK);
+      }
+    }
+  }
+}
 
 void TurnGray(ImageData* image) {
   int height = image->GetHeight();

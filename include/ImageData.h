@@ -3,6 +3,7 @@
 #define INCLUDE_IMAGEDATA_H_
 
 #include <vector>
+#include <include/utils.h>
 
 class ImageData {
  public:

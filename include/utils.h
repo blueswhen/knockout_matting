@@ -6,8 +6,9 @@ class ImageData;
 
 namespace utils {
 
+void GetTrimap(ImageData* image);
+void GetBand(ImageData* image);
 void TurnGray(ImageData* image);
-
 // alpha managerment
 void CreateAlphaForTrimap(ImageData* trimap);
 void SetAlphaForImage(const ImageData& alpha_map, ImageData* image_data);

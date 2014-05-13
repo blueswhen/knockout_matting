@@ -6,13 +6,16 @@
 
 int main(int argc, char** argv) {
   ImageData girl_img;
-  RWjpeg girl_jpg("test_image/girl_input.jpg", &girl_img);
+  RWjpeg girl_jpg("image.jpg", &girl_img);
 
   ImageData girl_trimap;
-  RWjpeg girl_trimap_jpg("test_image/girl_mask.jpg", &girl_trimap);
+  RWjpeg girl_trimap_jpg("image.jpg", &girl_trimap);
 
-  utils::CreateAlphaForTrimap(&girl_trimap);
-  utils::SetAlphaForImage(girl_trimap, &girl_img);
+  // utils::CreateAlphaForTrimap(&girl_trimap);
+  // utils::SetAlphaForImage(girl_trimap, &girl_img);
+  utils::GetBand(&girl_trimap);
+  utils::GetTrimap(&girl_trimap);
 
-  girl_jpg.Save("girl_out.jpg");
+  girl_jpg.Save("girl.jpg");
+  girl_trimap_jpg.Save("girl_trimap.jpg");
 }
