@@ -8,6 +8,7 @@
 class ImageData {
  public:
   friend class RWjpeg;
+  friend class RWImage;
 
   ImageData();
   ImageData(const ImageData& image_data);

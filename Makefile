@@ -1,16 +1,16 @@
 #Copyright 2014-5 sxniu 
 
 CXX = g++
-LIBS = -ljpeg
+LIBS = -ljpeg -lopencv_core -lopencv_highgui
 INCS = -I.
 
 knockout : \
 	src/main.cpp \
-	src/RWjpeg.cpp \
+	src/RWImage.cpp \
 	src/ImageData.cpp \
 	src/utils.cpp \
 	src/region_filling_by_edge_tracing.cpp \
-	include/RWjpeg.h \
+	include/RWImage.h \
 	include/ImageData.h \
 	include/utils.h \
 	include/region_filling_by_edge_tracing.h
@@ -19,3 +19,4 @@ knockout : \
 clean :
 	rm -f knockout
 	rm -f *.jpg
+	rm -f *.bmp

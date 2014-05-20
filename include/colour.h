@@ -1,6 +1,5 @@
 // Copyright 2014-5 sxniu
 
-#define WHITE 0x00ffffff
 #define RED 0x00ff0000
 #define GREEN 0x0000ff00
 #define BLUE 0x000000ff
@@ -8,7 +7,6 @@
 #define BLACK 0
 #define GRAY 0x00808080
 // 16 colours
-#define COLOUR_RED 0x00ff0000
 #define COLOUR_YELLOW 0x00ffff00
 #define COLOUR_PURPLE 0x00ff00ff
 #define COLOUR_CYAN 0x0000ffff

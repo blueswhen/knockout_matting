@@ -288,7 +288,6 @@ void RegionFillingByEdgeTracing(int* image, int image_width,
     }
   }
   EdgeRecovery(image, image_width, image_height, filling_colour);
-  // utils::ShowNum(k);
 }
 
 }  // namespace region_filling_by_edge_tracing
