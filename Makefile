@@ -9,10 +9,12 @@ knockout : \
 	src/RWImage.cpp \
 	src/ImageData.cpp \
 	src/utils.cpp \
+	src/matting.cpp \
 	src/region_filling_by_edge_tracing.cpp \
 	include/RWImage.h \
 	include/ImageData.h \
 	include/utils.h \
+	include/matting.h \
 	include/region_filling_by_edge_tracing.h
 	$(CXX) $^ $(LIBS) $(INCS) -o $@
 

@@ -1,4 +1,4 @@
-knockout_matting
+knockout matting
 ================
 
 knockout matting algorithm

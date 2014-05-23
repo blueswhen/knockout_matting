@@ -9,512 +9,7 @@
 #include "include/region_filling_by_edge_tracing.h"
 #include "include/colour.h"
 
-#define FILLING_COLOUR RED
-#define SUBJECT_LINE RED
-#define BACKGROUND_LINE BLUE
-#define UNKNOWN_COLOUR GRAY
-#define SUBJECT_COLOUR WHITE
-#define BACKGROUND_COLOUR BLACK
-#define SCRIBBLE_COLOUR BLUE
-#define PASS_COLOUR 0xff000000 
-#define MAX_NUM 10000
-
-#define MAX_SEARCH_RADIUS 512
-
-enum Scene {
-  SUBJECT,
-  BACKGROUND
-};
-
-#define GET_THREE_COORDINATE(colour) \
-{ \
-  (colour & RED) >> 16, \
-  (colour & GREEN) >> 8, \
-  colour & BLUE \
-}
-
-#define TURN_COORDINATE_TO_COLOUR(x, y, z) ((x << 16) + (y << 8) + z)
-
-#define GET_DIFFERENCE(d, s) \
-{ \
-  abs(d[0] - s[0]), \
-  abs(d[1] - s[1]), \
-  abs(d[2] - s[2]), \
-}
-
 namespace utils {
-
-void SetSearchBox(int* search_array, int size, int x, int y,
-                  int width, int height, int search_radius, int* search_size) {
-  if (size != 8 * search_radius) {
-    printf("error: the size of array is wrong, size = %d, search_radius = %d\n", size, search_radius);
-    return;
-  }
-
-  int y_top = std::max(y - search_radius, 0);
-  int y_bottom = std::min(y + search_radius, height);
-  int x_left = std::max(x - search_radius, 0);
-  int x_right = std::min(x + search_radius, width);
-  *search_size = 0;
-
-  for (int x_pos = x_left; x_pos < x_right; x_pos += x_right - x_left - 1) {
-    for (int y_pos = y_top; y_pos < y_bottom; ++y_pos) {
-      int index = y_pos * width + x_pos;
-      search_array[(*search_size)++] = index;
-    }
-  }
-  for (int y_pos = y_top; y_pos < y_bottom; y_pos += y_bottom - y_top - 1) {
-    for (int x_pos = x_left; x_pos < x_right; ++x_pos) {
-      int index = y_pos * width + x_pos;
-      search_array[(*search_size)++] = index;
-    }
-  }
-}
-
-void SearchIntersectionPointsOfSubsAndBacks(
-  ImageData* image, int x, int y, std::vector<int>* intersection_points_sub,
-  std::vector<int>* intersection_points_back,
-  int* radius_sub, int* radius_back) {
-  int height = image->GetHeight();
-  int width = image->GetWidth();
-  bool subs_found = false;
-  bool backs_found = false;
-  if (intersection_points_sub->size() != 0 ||
-      intersection_points_back->size() != 0) {
-    printf("error, the vector is not empty\n");
-    return;
-  }
-
-  for (int search_radius = 1; search_radius <= MAX_SEARCH_RADIUS; search_radius *= 2) {
-    int size = 8 * search_radius;
-    int search_box[size];
-    int search_size = 0;
-    SetSearchBox(search_box, size, x, y, width, height, search_radius, &search_size);
-    for (int i = 0; i < search_size; ++i) {
-      if (!subs_found && (image->GetPixel(search_box[i]) & 0x00ffffff) == SUBJECT_LINE) {
-        intersection_points_sub->push_back(search_box[i]);
-        // image->SetPixel(search_box[i], GREEN);
-
-        // if search_radius <= 8, we think the first intersection found is
-        // the nearest sample point
-        // if (search_radius <= 8) {
-        //   subs_found = true;
-        // }
-      } else if (!backs_found && (image->GetPixel(search_box[i]) & 0x00ffffff) ==
-                 BACKGROUND_LINE) {
-        intersection_points_back->push_back(search_box[i]);
-        // image->SetPixel(y * width + x, COLOUR_YELLOW);
-
-        // if (search_radius <= 8) {
-        //   backs_found = true;
-        // }
-      }
-      if (subs_found && backs_found) {
-        break;
-      }
-    }
-    if (!subs_found && intersection_points_sub->size() != 0) {
-      *radius_sub = search_radius;
-      subs_found = true;
-    }
-    if (!backs_found && intersection_points_back->size() != 0) {
-      *radius_back = search_radius;
-      backs_found = true;
-    }
-    if (subs_found && backs_found) {
-      // for (int i = 0; i < search_size; ++i) {
-      //   int colour = image->GetPixel(search_box[i]);
-      //   if (colour != GREEN && colour != COLOUR_YELLOW) {
-      //     image->SetPixel(search_box[i], COLOUR_PURPLE);
-      //   }
-      // }
-      break;
-    }
-  }
-}
-
-void CollectInitialSamples(ImageData* origin, ImageData* trimap, int radius,
-                           int width, int height, int line_colour, int center,
-                           const std::vector<int>& intersections,
-                           std::vector<std::pair<int, int> >* sample_points,
-                           int* left_sample_index, int* right_sample_index,
-                           int* smallest_distance, int* nearest_index) {
-  *left_sample_index = intersections[0];
-  for (int i = 0; i < intersections.size(); ++i) {
-    int index_center = intersections[i];
-    int index_cen_new = index_center;
-    trimap->SetPixel(index_center, PASS_COLOUR | line_colour);
-    int x_cen_distance = abs(index_center - center) % width;
-    int y_cen_distance = abs(index_center - center) / width;
-    int euc_cen_distance = y_cen_distance * y_cen_distance +
-                           x_cen_distance * x_cen_distance;
-    std::pair<int, int> sample_first(euc_cen_distance, origin->GetPixel(index_center));
-    sample_points->push_back(sample_first);
-
-    int k = 0;
-    while (k < MAX_NUM) {
-      int index_cen_y = index_center / width;
-      int index_cen_x = index_center - index_cen_y * width;
-      int arround_index[8] = EIGHT_ARROUND_POSITION(
-                               index_cen_x, index_cen_y, width, height);
-
-      for (int j = 0; j < 8; ++j) {
-        if (arround_index[j] > 0 && arround_index[j] < width * height) {
-          int colour = trimap->GetPixel(arround_index[j]);
-          int x_distance = abs(arround_index[j] - center) % width;
-          int y_distance = abs(arround_index[j] - center) / width;
-          if (colour == line_colour &&
-              x_distance <= radius &&
-              y_distance <= radius) {
-            trimap->SetPixel(arround_index[j], PASS_COLOUR | line_colour);
-            int euc_distance = x_distance * x_distance + y_distance * y_distance;
-            std::pair<int, int> sample(euc_distance,
-                                       origin->GetPixel(arround_index[j]));
-
-            sample_points->push_back(sample);
-            *right_sample_index = arround_index[j];
-
-            if (euc_distance < *smallest_distance) {
-              *smallest_distance = euc_distance;
-              *nearest_index = sample_points->size();
-            }
-            index_cen_new = arround_index[j];
-            break;
-          }
-        }
-      }
-      if (index_center == index_cen_new) {
-        break;
-      } else {
-        index_center = index_cen_new;
-      }
-      k++;
-    }
-  }
-}
-
-void CollectMoreSamplesFromLeftOrRight(ImageData* origin, ImageData* trimap,
-                                   int width, int height, int line_colour,
-                                   int smaples_number, int start_pos, 
-                                   std::vector<std::pair<int, int> >* sample_points) {
-  int index_center = start_pos;
-  int index_cen_new = index_center;
-  for (int i = 0; i < smaples_number; ++i) {
-    int index_cen_y = index_center / width;
-    int index_cen_x = index_center - index_cen_y * width;
-    int arround_index[8] = EIGHT_ARROUND_POSITION(index_cen_x, index_cen_y, width, height);
-    for (int k = 0; k < 8; ++k) {
-      if (arround_index[k] > 0 && arround_index[k] < width * height) {
-        int colour = trimap->GetPixel(arround_index[k]);
-        int x_distance = abs(arround_index[k] - index_center) % width;
-        int y_distance = abs(arround_index[k] - index_center) / width;
-        if (colour == line_colour) {
-          trimap->SetPixel(arround_index[k], PASS_COLOUR | line_colour);
-          int euc_distance = x_distance * x_distance + y_distance * y_distance;
-          std::pair<int, int> sample(euc_distance, origin->GetPixel(arround_index[i]));
-          sample_points->push_back(sample);
-          index_cen_new = arround_index[i];
-          break;
-        }
-      }
-    }
-    if (index_cen_new == index_center) {
-      break;
-    } else {
-      index_center = index_cen_new;
-    }
-  }
-}
-
-int CalcMeanValue(const std::vector<std::pair<int, int> >& sample_points) {
-  int sum_distance = 0;
-  double sum_weighted[3] = {0, 0, 0};
-  for (int i = 0; i < sample_points.size(); ++i) {
-    sum_distance += sample_points[i].first;
-    int sample[3] = GET_THREE_COORDINATE(sample_points[i].second);
-    sum_weighted[0] += sample_points[i].first * sample[0];
-    sum_weighted[1] += sample_points[i].first * sample[1];
-    sum_weighted[2] += sample_points[i].first * sample[2];
-  }
-  int colour_x = static_cast<int>(sum_weighted[0] / sum_distance);
-  int colour_y = static_cast<int>(sum_weighted[1] / sum_distance);
-  int colour_z = static_cast<int>(sum_weighted[2] / sum_distance);
-  return TURN_COORDINATE_TO_COLOUR(colour_x, colour_y, colour_z);
-}
-
-int DoGenerateSampleColour(ImageData* origin, ImageData* trimap, int radius,
-                           int width, int height, int line_colour, int center,
-                           const std::vector<int>& intersections) {
-  std::vector<std::pair<int, int> > sample_points;
-  int smallest_distance = MAX_NUM;
-  int nearest_index = 0;
-  int left_sample_index = 0;
-  int right_sample_index = 0;
-  CollectInitialSamples(origin, trimap, radius, width, height, line_colour,
-                        center, intersections, &sample_points,
-                        &left_sample_index, &right_sample_index,
-                        &smallest_distance, &nearest_index);
-
-  smallest_distance = static_cast<int>(sqrt(smallest_distance));
-  int left_more_samples_number =
-    std::max(smallest_distance - nearest_index, 0);
-  int right_more_samples_number = 
-    std::max(smallest_distance - static_cast<int>(sample_points.size()) +
-             nearest_index, 0);
-
-  CollectMoreSamplesFromLeftOrRight(origin, trimap, width, height, line_colour,
-                                   left_more_samples_number, left_sample_index,
-                                   &sample_points);
-  CollectMoreSamplesFromLeftOrRight(origin, trimap, width, height, line_colour,
-                                   right_more_samples_number, right_sample_index,
-                                   &sample_points);
-  return CalcMeanValue(sample_points);
-  // return sample_points[nearest_index].second;
-}
-
-std::pair<int, int> GenerateSampleColourByIntersectionPoints(
-                      ImageData* origin, ImageData* trimap, int center,
-                      int radius_sub, int radius_back,
-                      const std::vector<int>& intersection_subs,
-                      const std::vector<int>& intersection_backs) {
-  int height = trimap->GetHeight();
-  int width = trimap->GetWidth();
-  int subject_sample = DoGenerateSampleColour(origin, trimap, radius_sub,
-                                              width, height, SUBJECT_LINE,
-                                              center, intersection_subs);
-  int background_sample = DoGenerateSampleColour(origin, trimap, radius_back,
-                                                 width, height, BACKGROUND_LINE,
-                                                 center, intersection_backs);
-  std::pair<int, int> samples(subject_sample, background_sample);
-  return samples;
-}
-
-std::pair<int, int> GenerateSubjectAndBackgroundSampleColour(
-                      ImageData* origin, ImageData* trimap, int x, int y,
-                      int* radius_sub, int* radius_back) {
-  std::vector<int> intersection_points_sub;
-  std::vector<int> intersection_points_back;
-  int center = y * trimap->GetWidth() + x;
-  SearchIntersectionPointsOfSubsAndBacks(trimap, x, y, &intersection_points_sub,
-                                         &intersection_points_back,
-                                         radius_sub, radius_back);
-  if (intersection_points_sub.size() == 0 ||
-      intersection_points_back.size() == 0) {
-    printf("error: algorithm can not find sample points\n");
-    // trimap->SetPixel(center, COLOUR_YELLOW);
-    std::pair<int, int> err;
-    return err;
-  }
-  return GenerateSampleColourByIntersectionPoints(
-           origin, trimap, center, *radius_sub, *radius_back,
-           intersection_points_sub, intersection_points_back);
-}
-
-int DoRefinement(int sample_refined, int sample_reference, int current_col) {
-  int ref[3] = GET_THREE_COORDINATE(sample_reference);
-  int spl[3] = GET_THREE_COORDINATE(sample_refined);
-  int curr[3] = GET_THREE_COORDINATE(current_col);
-
-  int sr[3] = GET_DIFFERENCE(ref, spl);
-  int sc[3] = GET_DIFFERENCE(curr, spl);
-  if (sr[0] == 0 && sr[1] == 0 && sr[2] == 0) {
-    return sample_refined;
-  }
-
-  double k = static_cast<double>(sr[0] * sc[0] + sr[1] * sc[1] + sr[2] * sc[2]) /
-             (sr[0] * sr[0] + sr[1] * sr[1] + sr[2] * sr[2]);
-  int rfsample_current[3] = {k * sr[0], k * sr[1], k * sr[2]};
-  int rfsample[3] = {curr[0] - rfsample_current[0], curr[1] - rfsample_current[1],
-                     curr[2] - rfsample_current[2]};
-  return TURN_COORDINATE_TO_COLOUR(rfsample[0], rfsample[1], rfsample[2]);
-}
-
-int RefinementSample(int sub_sample, int back_sample,
-                     int current_colour, Scene obj_refined) {
-  if (obj_refined == BACKGROUND) {
-    return DoRefinement(back_sample, sub_sample, current_colour);
-  } else {
-    return DoRefinement(sub_sample, back_sample, current_colour);
-  }
-}
-
-double CalcAlpha(int sub_sample, int back_sample, int current_colour) {
-  int sub[3] = GET_THREE_COORDINATE(sub_sample);
-  int back[3] = GET_THREE_COORDINATE(back_sample);
-  int curr[3] = GET_THREE_COORDINATE(current_colour);
-
-  int c_b[3] = GET_DIFFERENCE(curr, back);
-  int s_b[3] = GET_DIFFERENCE(sub, back);
-  double alpha[3];
-  for (int i = 0; i < 3; ++i) {
-    if (s_b[i] != 0) {
-      alpha[i] = static_cast<double>(c_b[i]) / s_b[i];
-    } else {
-      alpha[i] = 1;
-    }
-  }
-  double alpha_v = (alpha[0] * s_b[0] + alpha[1] * s_b[1] + alpha[2] * s_b[2]) /
-                   (s_b[0] + s_b[1] + s_b[2]);
-
-  return alpha_v < 1 ? alpha_v : 1;
-  // if (alpha_v > 1) {
-  //   int bc[3] = {curr[0] - back[0], curr[1] - back[0], curr[2] - back[2]};
-  //   int bs[3] = {sub[0] - back[0], sub[1] - back[0], sub[2] - back[2]};
-  //   int bc_dot_bs = bc[0] * bs[0] + bc[1] * bs[1] + bc[2] * bs[2];
-  //   if (bc_dot_bs < 0) {
-  //     alpha_v = 0;
-  //   } else {
-  //     alpha_v = 1;
-  //   }
-  // }
-  // return alpha_v;
-}
-
-void GenerateForegroundWithAlphaValue(ImageData* origin, ImageData* trimap) {
-  int height = trimap->GetHeight();
-  int width = trimap->GetWidth();
-  for (int y = 1; y < height - 1; ++y) {
-    for (int x = 1; x < width - 1; ++x) {
-      int index = y * width + x;
-      int colour = trimap->GetPixel(index);
-
-      if (colour == UNKNOWN_COLOUR) {
-        int radius_sub = 0;
-        int radius_back = 0;
-        std::pair<int, int> sample_colour = 
-          GenerateSubjectAndBackgroundSampleColour(origin, trimap, x, y,
-                                                   &radius_sub, &radius_back);
-        int sub_sample = sample_colour.first;
-        int back_sample = sample_colour.second;
-        int current_colour = origin->GetPixel(index);
-        if (radius_sub <= radius_back) {
-          back_sample = RefinementSample(sub_sample, back_sample,
-                                         current_colour, BACKGROUND);
-        } else {
-          sub_sample = RefinementSample(sub_sample, back_sample,
-                                        current_colour, SUBJECT);
-        }
-        double alpha = CalcAlpha(sub_sample, back_sample, current_colour);
-        int alpha_colour = (static_cast<int>(alpha * 255) << 16) +
-                           (static_cast<int>(alpha  * 255) << 8) +
-                           static_cast<int>(alpha * 255);
-        printf("%d,%d alpha = %f\n", x, y, alpha);
-        // trimap->SetPixel(index, bc_v);
-        trimap->SetPixel(index, alpha_colour);
-      }
-    }
-  }
-}
-
-void SetSceneLineNearUnknownArea(ImageData* image) {
-  int height = image->GetHeight();
-  int width = image->GetWidth();
-  for (int y = 1; y < height - 1; ++y) {
-    for (int x = 1; x < width - 1; ++x) {
-      int index = y * width + x;
-      int colour = image->GetPixel(index);
-      if (colour == UNKNOWN_COLOUR) {
-        int arround_index[8] = EIGHT_ARROUND_POSITION(x, y, width, height);
-        for (int i = 0; i < 8; ++i) {
-          int arround_colour = image->GetPixel(arround_index[i]);
-          if (arround_colour == SUBJECT_COLOUR) {
-            image->SetPixel(arround_index[i], SUBJECT_LINE);
-          } else if (arround_colour == BACKGROUND_COLOUR) {
-            image->SetPixel(arround_index[i], BACKGROUND_LINE);
-          }
-        }
-      }
-    }
-  }
-}
-
-void RemoveSceneLineNearUnknownArea(ImageData* image) {
-  int height = image->GetHeight();
-  int width = image->GetWidth();
-  for (int y = 0; y < height; ++y) {
-    for (int x = 0; x < width; ++x) {
-      int index = y * width + x;
-      int colour = image->GetPixel(index);
-      if ((colour & 0x00ffffff) == SUBJECT_LINE) {
-        image->SetPixel(index, WHITE);
-      } else if ((colour & 0x00ffffff) == BACKGROUND_LINE) {
-        image->SetPixel(index, BLACK);
-      }
-    }
-  }
-}
-
-void GetBand(ImageData* image) {
-  int height = image->GetHeight();
-  int width = image->GetWidth();
-  for (int y = 0; y < height; ++y) {
-    for (int x  = 0; x < width; ++x) {
-      int index = y * width + x;
-      int colour = image->GetPixel(index);
-      int red = (colour & RED) >> 16;
-      int green = (colour & GREEN) >> 8;
-      int blue = colour & BLUE;
-      if (colour == SCRIBBLE_COLOUR) {
-      // filter pure blue colour
-      // if (red < 50 && green < 50 && blue < 50) {
-        image->SetPixel(index, WHITE);
-      } else {
-        image->SetPixel(index, BLACK);
-      }
-    }
-  }
-}
-
-void GetTrimapWithScribble(ImageData* image) {
-  GetBand(image);
-  int height = image->GetHeight();
-  int width = image->GetWidth();
-
-  int* image_data = new int[width * height];
-  for (int y = 0; y < height; ++y) {
-    for (int x = 0; x < width; ++x) {
-      int index = y * width + x;
-      image_data[index] = image->GetPixel(index);
-    }
-  }
-  region_filling_by_edge_tracing::RegionFillingByEdgeTracing(
-    image_data, width, height, FILLING_COLOUR);
-  for (int y = 0; y < height; ++y) {
-    for (int x = 0; x < width; ++x) {
-      int index = y * width + x;
-      if (image_data[index] == WHITE) {
-        image->SetPixel(index, UNKNOWN_COLOUR);
-      } else if(image_data[index] == FILLING_COLOUR) {
-        image->SetPixel(index, SUBJECT_COLOUR);
-      } else {
-        image->SetPixel(index, BACKGROUND_COLOUR);
-      }
-    }
-  }
-  delete [] image_data;
-}
-
-void GetTrimap(ImageData* image) {
-  int height = image->GetHeight();
-  int width = image->GetWidth();
-
-  for (int y = 0; y < height; ++y) {
-    for (int x = 0; x < width; ++x) {
-      int index = y * width + x;
-      int colour = image->GetPixel(index);
-      int col[3] = GET_THREE_COORDINATE(colour);
-      int gray[3] = GET_THREE_COORDINATE(GRAY);
-      int diff[3] = GET_DIFFERENCE(col, gray);
-      if ( diff[0] < 50 && diff[1] < 50 && diff[2] < 50) {
-        image->SetPixel(index, UNKNOWN_COLOUR);
-      } else if(col[0] > 100 && col[1] > 100 && col[2] > 100) {
-        image->SetPixel(index, SUBJECT_COLOUR);
-      } else {
-        image->SetPixel(index, BACKGROUND_COLOUR);
-      }
-    }
-  }
-}
 
 void TurnGray(ImageData* image) {
   int height = image->GetHeight();
@@ -565,7 +60,7 @@ void SetAlphaForImage(const ImageData& alpha_map, ImageData* image_data) {
       image_data->SetPixel(i, colour | map_alpha);
     }
   } else {
-    printf("the map size is not matched");
+    printf("the map size is not matched\n");
   }
 }
 
@@ -587,6 +82,255 @@ void ShowAlpha(ImageData* image) {
   }
 }
 
+void RGB2HSI(unsigned char img_r, unsigned char img_g,
+             unsigned char img_b, double hsi[3]) {
+  unsigned char min_rgb;  // rgb分量中的最小值
+  // HSI分量
+  double fHue, fSaturation, fIntensity; 
+  // Intensity分量[0, 1]
+  fIntensity = (double)((img_b + img_g + img_r)/3)/255;
+  // 得到RGB分量中的最小值
+  double fTemp = img_r < img_g ? img_r : img_g;
+  min_rgb = fTemp < img_b ? fTemp : img_b;
+  // Saturation分量[0, 1]
+  fSaturation = 1 - (double)(3 * min_rgb)/(img_r + img_g + img_b);
+  // 计算theta角
+  double numerator = (img_r - img_g + img_r - img_b ) / 2;
+  double denominator = sqrt( 
+    pow( (img_r - img_g), 2 ) + (img_r - img_b)*(img_g - img_b) );
+  // 计算Hue分量
+  if(denominator != 0) {
+    double theta = acos( numerator/denominator) * 180/3.14;
+    if(img_b <= img_g) {
+      fHue = theta ;
+    } else {
+      fHue = 360 - theta;
+    }
+  } else {
+    fHue = 0;
+  }
+  hsi[0] = fHue;
+  hsi[1] = fSaturation;
+  hsi[2] = fIntensity; 
+}
 
+void TurnHSI(ImageData* image) {
+  int height = image->GetHeight();
+  int width = image->GetWidth();
+  for (int y = 0; y < height; ++y) {
+    for (int x  = 0; x < width; ++x) {
+      int index = y * width + x;
+      int red = (image->GetPixel(index) & RED) >> 16;
+      int green = (image->GetPixel(index) & GREEN) >> 8;
+      int blue = image->GetPixel(index) & BLUE;
+      double hsi[3];
+      RGB2HSI(red, green, blue, hsi);
+      // double dTempB, dTempG, dTempR;
+      // if(hsi[0] < 120 && hsi[0] >= 0) {
+      //     // 将H转为弧度表示
+      //     hsi[0] = hsi[0] * 3.1415926 / 180;
+      //     dTempB = hsi[2] * (1 - hsi[1]);
+      //     dTempR = hsi[2] * ( 1 + (hsi[1] * cos(hsi[0]))/cos(3.1415926/3 - hsi[0]) );
+      //     dTempG = (3 * hsi[2] - (dTempR + dTempB)); 
+      // } else if(hsi[0] < 240 && hsi[0] >= 120) {
+      //     hsi[0] -= 120;
+      //                     
+      //     // 将H转为弧度表示
+      //     hsi[0] = hsi[0] * 3.1415926 / 180;
+
+      //     dTempR = hsi[2] * (1 - hsi[1]);
+      //     dTempG = hsi[2] * (1 + hsi[1] * cos(hsi[0])/cos(3.1415926/3 - hsi[0]));
+      //     dTempB = (3 * hsi[2] - (dTempR + dTempG));
+      // } else {
+      //     hsi[0] -= 240;
+
+      //     // 将H转为弧度表示
+      //     hsi[0] = hsi[0] * 3.1415926 / 180;
+
+      //     dTempG = hsi[2] * (1 - hsi[1]);
+      //     dTempB = hsi[2] * (1 + (hsi[1] * cos(hsi[0]))/cos(3.1415926/3 - hsi[0]));
+      //     dTempR = (3* hsi[2] - (dTempG + dTempB));
+      // }
+
+      // int b_new = static_cast<int>(dTempB * 255);
+      // int g_new = static_cast<int>(dTempG * 255);
+      // int r_new = static_cast<int>(dTempR * 255);
+      // int h_value = static_cast<int>((hsi[1]) * 255);
+      // int colour = (h_value << 16) + (h_value << 8) + h_value;
+      int b_new = static_cast<int>(hsi[0] * 255 / 360);
+      int g_new = static_cast<int>(hsi[1] * 255);
+      int r_new = static_cast<int>(hsi[2] * 255);
+      int colour = TURN_COORDINATE_TO_COLOUR(r_new, g_new, b_new);
+      image->SetPixel(index, colour);
+    }
+  }
+}
+
+
+
+
+
+
+static unsigned short _labCubeRootTab[3072] = {
+    4519, 4644, 4769, 4894, 5020, 5145, 5270, 5395, 5520, 5645, 5770, 5895, 6020, 6145, 6270, 6395, 6521, 6646, 6771, 6894, 7013, 7128, 7239, 7347, 7452, 7554, 7654, 7751, 7845, 7937, 8028, 8116, 
+    8202, 8287, 8370, 8451, 8531, 8609, 8686, 8761, 8836, 8909, 8980, 9051, 9121, 9189, 9257, 9324, 9389, 9454, 9518, 9581, 9643, 9705, 9765, 9825, 9884, 9943, 10001, 10058, 10114, 10170, 10225, 10280, 
+    10334, 10388, 10441, 10493, 10545, 10597, 10648, 10698, 10748, 10798, 10847, 10895, 10944, 10991, 11039, 11086, 11132, 11178, 11224, 11270, 11315, 11360, 11404, 11448, 11492, 11535, 11578, 11621, 11663, 11705, 11747, 11789, 
+    11830, 11871, 11911, 11952, 11992, 12032, 12071, 12111, 12150, 12189, 12227, 12265, 12304, 12341, 12379, 12416, 12454, 12491, 12527, 12564, 12600, 12636, 12672, 12708, 12743, 12779, 12814, 12849, 12883, 12918, 12952, 12986, 
+    13020, 13054, 13088, 13121, 13155, 13188, 13221, 13254, 13286, 13319, 13351, 13383, 13415, 13447, 13479, 13510, 13542, 13573, 13604, 13635, 13666, 13697, 13727, 13758, 13788, 13818, 13848, 13878, 13908, 13938, 13967, 13997, 
+    14026, 14055, 14084, 14113, 14142, 14171, 14199, 14228, 14256, 14284, 14312, 14340, 14368, 14396, 14424, 14451, 14479, 14506, 14533, 14560, 14588, 14615, 14641, 14668, 14695, 14721, 14748, 14774, 14801, 14827, 14853, 14879, 
+    14905, 14931, 14956, 14982, 15008, 15033, 15058, 15084, 15109, 15134, 15159, 15184, 15209, 15234, 15259, 15283, 15308, 15332, 15357, 15381, 15405, 15430, 15454, 15478, 15502, 15526, 15549, 15573, 15597, 15620, 15644, 15667, 
+    15691, 15714, 15737, 15760, 15784, 15807, 15830, 15852, 15875, 15898, 15921, 15943, 15966, 15989, 16011, 16033, 16056, 16078, 16100, 16122, 16144, 16166, 16188, 16210, 16232, 16254, 16276, 16297, 16319, 16341, 16362, 16384, 
+    16405, 16426, 16448, 16469, 16490, 16511, 16532, 16553, 16574, 16595, 16616, 16637, 16657, 16678, 16699, 16719, 16740, 16760, 16781, 16801, 16821, 16842, 16862, 16882, 16902, 16922, 16942, 16962, 16982, 17002, 17022, 17042, 
+    17062, 17082, 17101, 17121, 17140, 17160, 17179, 17199, 17218, 17238, 17257, 17276, 17296, 17315, 17334, 17353, 17372, 17391, 17410, 17429, 17448, 17467, 17486, 17504, 17523, 17542, 17561, 17579, 17598, 17616, 17635, 17653, 
+    17672, 17690, 17708, 17727, 17745, 17763, 17781, 17800, 17818, 17836, 17854, 17872, 17890, 17908, 17926, 17944, 17961, 17979, 17997, 18015, 18032, 18050, 18068, 18085, 18103, 18120, 18138, 18155, 18173, 18190, 18208, 18225, 
+    18242, 18259, 18277, 18294, 18311, 18328, 18345, 18362, 18379, 18396, 18413, 18430, 18447, 18464, 18481, 18498, 18514, 18531, 18548, 18565, 18581, 18598, 18615, 18631, 18648, 18664, 18681, 18697, 18714, 18730, 18746, 18763, 
+    18779, 18795, 18812, 18828, 18844, 18860, 18876, 18892, 18909, 18925, 18941, 18957, 18973, 18989, 19004, 19020, 19036, 19052, 19068, 19084, 19100, 19115, 19131, 19147, 19162, 19178, 19194, 19209, 19225, 19240, 19256, 19271, 
+    19287, 19302, 19318, 19333, 19348, 19364, 19379, 19394, 19410, 19425, 19440, 19455, 19470, 19486, 19501, 19516, 19531, 19546, 19561, 19576, 19591, 19606, 19621, 19636, 19651, 19666, 19681, 19695, 19710, 19725, 19740, 19754, 
+    19769, 19784, 19799, 19813, 19828, 19842, 19857, 19872, 19886, 19901, 19915, 19930, 19944, 19959, 19973, 19987, 20002, 20016, 20030, 20045, 20059, 20073, 20088, 20102, 20116, 20130, 20144, 20159, 20173, 20187, 20201, 20215, 
+    20229, 20243, 20257, 20271, 20285, 20299, 20313, 20327, 20341, 20355, 20369, 20382, 20396, 20410, 20424, 20438, 20451, 20465, 20479, 20493, 20506, 20520, 20534, 20547, 20561, 20574, 20588, 20601, 20615, 20629, 20642, 20656, 
+    20669, 20682, 20696, 20709, 20723, 20736, 20749, 20763, 20776, 20789, 20803, 20816, 20829, 20842, 20856, 20869, 20882, 20895, 20908, 20922, 20935, 20948, 20961, 20974, 20987, 21000, 21013, 21026, 21039, 21052, 21065, 21078, 
+    21091, 21104, 21117, 21130, 21143, 21155, 21168, 21181, 21194, 21207, 21219, 21232, 21245, 21258, 21270, 21283, 21296, 21308, 21321, 21334, 21346, 21359, 21372, 21384, 21397, 21409, 21422, 21434, 21447, 21459, 21472, 21484, 
+    21497, 21509, 21521, 21534, 21546, 21559, 21571, 21583, 21596, 21608, 21620, 21633, 21645, 21657, 21669, 21682, 21694, 21706, 21718, 21730, 21743, 21755, 21767, 21779, 21791, 21803, 21815, 21827, 21839, 21852, 21864, 21876, 
+    21888, 21900, 21912, 21924, 21935, 21947, 21959, 21971, 21983, 21995, 22007, 22019, 22031, 22042, 22054, 22066, 22078, 22090, 22101, 22113, 22125, 22137, 22148, 22160, 22172, 22184, 22195, 22207, 22219, 22230, 22242, 22253, 
+    22265, 22277, 22288, 22300, 22311, 22323, 22334, 22346, 22357, 22369, 22380, 22392, 22403, 22415, 22426, 22438, 22449, 22460, 22472, 22483, 22495, 22506, 22517, 22529, 22540, 22551, 22563, 22574, 22585, 22596, 22608, 22619, 
+    22630, 22641, 22653, 22664, 22675, 22686, 22697, 22708, 22720, 22731, 22742, 22753, 22764, 22775, 22786, 22797, 22808, 22819, 22830, 22841, 22852, 22863, 22874, 22885, 22896, 22907, 22918, 22929, 22940, 22951, 22962, 22973, 
+    22984, 22995, 23006, 23016, 23027, 23038, 23049, 23060, 23071, 23081, 23092, 23103, 23114, 23124, 23135, 23146, 23157, 23167, 23178, 23189, 23199, 23210, 23221, 23231, 23242, 23253, 23263, 23274, 23285, 23295, 23306, 23316, 
+    23327, 23337, 23348, 23359, 23369, 23380, 23390, 23401, 23411, 23422, 23432, 23443, 23453, 23463, 23474, 23484, 23495, 23505, 23516, 23526, 23536, 23547, 23557, 23567, 23578, 23588, 23598, 23609, 23619, 23629, 23640, 23650, 
+    23660, 23670, 23681, 23691, 23701, 23711, 23722, 23732, 23742, 23752, 23762, 23773, 23783, 23793, 23803, 23813, 23823, 23833, 23844, 23854, 23864, 23874, 23884, 23894, 23904, 23914, 23924, 23934, 23944, 23954, 23964, 23974, 
+    23984, 23994, 24004, 24014, 24024, 24034, 24044, 24054, 24064, 24074, 24084, 24094, 24104, 24114, 24123, 24133, 24143, 24153, 24163, 24173, 24183, 24192, 24202, 24212, 24222, 24232, 24241, 24251, 24261, 24271, 24280, 24290, 
+    24300, 24310, 24319, 24329, 24339, 24349, 24358, 24368, 24378, 24387, 24397, 24407, 24416, 24426, 24435, 24445, 24455, 24464, 24474, 24484, 24493, 24503, 24512, 24522, 24531, 24541, 24550, 24560, 24570, 24579, 24589, 24598, 
+    24608, 24617, 24627, 24636, 24646, 24655, 24664, 24674, 24683, 24693, 24702, 24712, 24721, 24730, 24740, 24749, 24759, 24768, 24777, 24787, 24796, 24805, 24815, 24824, 24833, 24843, 24852, 24861, 24871, 24880, 24889, 24898, 
+    24908, 24917, 24926, 24935, 24945, 24954, 24963, 24972, 24982, 24991, 25000, 25009, 25018, 25028, 25037, 25046, 25055, 25064, 25073, 25083, 25092, 25101, 25110, 25119, 25128, 25137, 25146, 25155, 25165, 25174, 25183, 25192, 
+    25201, 25210, 25219, 25228, 25237, 25246, 25255, 25264, 25273, 25282, 25291, 25300, 25309, 25318, 25327, 25336, 25345, 25354, 25363, 25372, 25381, 25389, 25398, 25407, 25416, 25425, 25434, 25443, 25452, 25461, 25469, 25478, 
+    25487, 25496, 25505, 25514, 25523, 25531, 25540, 25549, 25558, 25567, 25575, 25584, 25593, 25602, 25610, 25619, 25628, 25637, 25645, 25654, 25663, 25672, 25680, 25689, 25698, 25707, 25715, 25724, 25733, 25741, 25750, 25759, 
+    25767, 25776, 25785, 25793, 25802, 25811, 25819, 25828, 25836, 25845, 25854, 25862, 25871, 25879, 25888, 25897, 25905, 25914, 25922, 25931, 25939, 25948, 25956, 25965, 25973, 25982, 25990, 25999, 26007, 26016, 26024, 26033, 
+    26041, 26050, 26058, 26067, 26075, 26084, 26092, 26101, 26109, 26118, 26126, 26134, 26143, 26151, 26160, 26168, 26176, 26185, 26193, 26202, 26210, 26218, 26227, 26235, 26243, 26252, 26260, 26268, 26277, 26285, 26293, 26302, 
+    26310, 26318, 26327, 26335, 26343, 26351, 26360, 26368, 26376, 26384, 26393, 26401, 26409, 26417, 26426, 26434, 26442, 26450, 26459, 26467, 26475, 26483, 26491, 26500, 26508, 26516, 26524, 26532, 26540, 26549, 26557, 26565, 
+    26573, 26581, 26589, 26597, 26606, 26614, 26622, 26630, 26638, 26646, 26654, 26662, 26670, 26678, 26687, 26695, 26703, 26711, 26719, 26727, 26735, 26743, 26751, 26759, 26767, 26775, 26783, 26791, 26799, 26807, 26815, 26823, 
+    26831, 26839, 26847, 26855, 26863, 26871, 26879, 26887, 26895, 26903, 26911, 26919, 26927, 26934, 26942, 26950, 26958, 26966, 26974, 26982, 26990, 26998, 27006, 27013, 27021, 27029, 27037, 27045, 27053, 27061, 27069, 27076, 
+    27084, 27092, 27100, 27108, 27116, 27123, 27131, 27139, 27147, 27155, 27162, 27170, 27178, 27186, 27193, 27201, 27209, 27217, 27225, 27232, 27240, 27248, 27256, 27263, 27271, 27279, 27286, 27294, 27302, 27310, 27317, 27325, 
+    27333, 27340, 27348, 27356, 27363, 27371, 27379, 27386, 27394, 27402, 27409, 27417, 27425, 27432, 27440, 27448, 27455, 27463, 27471, 27478, 27486, 27493, 27501, 27509, 27516, 27524, 27531, 27539, 27546, 27554, 27562, 27569, 
+    27577, 27584, 27592, 27599, 27607, 27615, 27622, 27630, 27637, 27645, 27652, 27660, 27667, 27675, 27682, 27690, 27697, 27705, 27712, 27720, 27727, 27735, 27742, 27750, 27757, 27764, 27772, 27779, 27787, 27794, 27802, 27809, 
+    27817, 27824, 27831, 27839, 27846, 27854, 27861, 27868, 27876, 27883, 27891, 27898, 27905, 27913, 27920, 27928, 27935, 27942, 27950, 27957, 27964, 27972, 27979, 27986, 27994, 28001, 28008, 28016, 28023, 28030, 28038, 28045, 
+    28052, 28060, 28067, 28074, 28082, 28089, 28096, 28103, 28111, 28118, 28125, 28132, 28140, 28147, 28154, 28161, 28169, 28176, 28183, 28190, 28198, 28205, 28212, 28219, 28227, 28234, 28241, 28248, 28255, 28263, 28270, 28277, 
+    28284, 28291, 28299, 28306, 28313, 28320, 28327, 28334, 28342, 28349, 28356, 28363, 28370, 28377, 28384, 28392, 28399, 28406, 28413, 28420, 28427, 28434, 28441, 28448, 28456, 28463, 28470, 28477, 28484, 28491, 28498, 28505, 
+    28512, 28519, 28526, 28533, 28541, 28548, 28555, 28562, 28569, 28576, 28583, 28590, 28597, 28604, 28611, 28618, 28625, 28632, 28639, 28646, 28653, 28660, 28667, 28674, 28681, 28688, 28695, 28702, 28709, 28716, 28723, 28730, 
+    28737, 28744, 28751, 28758, 28765, 28772, 28779, 28785, 28792, 28799, 28806, 28813, 28820, 28827, 28834, 28841, 28848, 28855, 28862, 28868, 28875, 28882, 28889, 28896, 28903, 28910, 28917, 28924, 28930, 28937, 28944, 28951, 
+    28958, 28965, 28972, 28978, 28985, 28992, 28999, 29006, 29013, 29019, 29026, 29033, 29040, 29047, 29054, 29060, 29067, 29074, 29081, 29088, 29094, 29101, 29108, 29115, 29121, 29128, 29135, 29142, 29149, 29155, 29162, 29169, 
+    29176, 29182, 29189, 29196, 29203, 29209, 29216, 29223, 29230, 29236, 29243, 29250, 29256, 29263, 29270, 29277, 29283, 29290, 29297, 29303, 29310, 29317, 29323, 29330, 29337, 29343, 29350, 29357, 29364, 29370, 29377, 29383, 
+    29390, 29397, 29403, 29410, 29417, 29423, 29430, 29437, 29443, 29450, 29457, 29463, 29470, 29476, 29483, 29490, 29496, 29503, 29509, 29516, 29523, 29529, 29536, 29542, 29549, 29556, 29562, 29569, 29575, 29582, 29588, 29595, 
+    29602, 29608, 29615, 29621, 29628, 29634, 29641, 29647, 29654, 29661, 29667, 29674, 29680, 29687, 29693, 29700, 29706, 29713, 29719, 29726, 29732, 29739, 29745, 29752, 29758, 29765, 29771, 29778, 29784, 29791, 29797, 29804, 
+    29810, 29817, 29823, 29829, 29836, 29842, 29849, 29855, 29862, 29868, 29875, 29881, 29888, 29894, 29900, 29907, 29913, 29920, 29926, 29932, 29939, 29945, 29952, 29958, 29965, 29971, 29977, 29984, 29990, 29997, 30003, 30009, 
+    30016, 30022, 30028, 30035, 30041, 30048, 30054, 30060, 30067, 30073, 30079, 30086, 30092, 30098, 30105, 30111, 30117, 30124, 30130, 30136, 30143, 30149, 30155, 30162, 30168, 30174, 30181, 30187, 30193, 30200, 30206, 30212, 
+    30218, 30225, 30231, 30237, 30244, 30250, 30256, 30262, 30269, 30275, 30281, 30288, 30294, 30300, 30306, 30313, 30319, 30325, 30331, 30338, 30344, 30350, 30356, 30363, 30369, 30375, 30381, 30388, 30394, 30400, 30406, 30412, 
+    30419, 30425, 30431, 30437, 30443, 30450, 30456, 30462, 30468, 30474, 30481, 30487, 30493, 30499, 30505, 30512, 30518, 30524, 30530, 30536, 30542, 30549, 30555, 30561, 30567, 30573, 30579, 30585, 30592, 30598, 30604, 30610, 
+    30616, 30622, 30628, 30635, 30641, 30647, 30653, 30659, 30665, 30671, 30677, 30683, 30690, 30696, 30702, 30708, 30714, 30720, 30726, 30732, 30738, 30744, 30750, 30757, 30763, 30769, 30775, 30781, 30787, 30793, 30799, 30805, 
+    30811, 30817, 30823, 30829, 30835, 30841, 30847, 30853, 30860, 30866, 30872, 30878, 30884, 30890, 30896, 30902, 30908, 30914, 30920, 30926, 30932, 30938, 30944, 30950, 30956, 30962, 30968, 30974, 30980, 30986, 30992, 30998, 
+    31004, 31010, 31016, 31022, 31028, 31034, 31040, 31046, 31052, 31057, 31063, 31069, 31075, 31081, 31087, 31093, 31099, 31105, 31111, 31117, 31123, 31129, 31135, 31141, 31147, 31153, 31158, 31164, 31170, 31176, 31182, 31188, 
+    31194, 31200, 31206, 31212, 31218, 31223, 31229, 31235, 31241, 31247, 31253, 31259, 31265, 31271, 31276, 31282, 31288, 31294, 31300, 31306, 31312, 31318, 31323, 31329, 31335, 31341, 31347, 31353, 31359, 31364, 31370, 31376, 
+    31382, 31388, 31394, 31399, 31405, 31411, 31417, 31423, 31429, 31434, 31440, 31446, 31452, 31458, 31463, 31469, 31475, 31481, 31487, 31492, 31498, 31504, 31510, 31516, 31521, 31527, 31533, 31539, 31544, 31550, 31556, 31562, 
+    31568, 31573, 31579, 31585, 31591, 31596, 31602, 31608, 31614, 31619, 31625, 31631, 31637, 31642, 31648, 31654, 31660, 31665, 31671, 31677, 31683, 31688, 31694, 31700, 31705, 31711, 31717, 31723, 31728, 31734, 31740, 31745, 
+    31751, 31757, 31763, 31768, 31774, 31780, 31785, 31791, 31797, 31802, 31808, 31814, 31819, 31825, 31831, 31836, 31842, 31848, 31853, 31859, 31865, 31870, 31876, 31882, 31887, 31893, 31899, 31904, 31910, 31916, 31921, 31927, 
+    31933, 31938, 31944, 31949, 31955, 31961, 31966, 31972, 31978, 31983, 31989, 31994, 32000, 32006, 32011, 32017, 32023, 32028, 32034, 32039, 32045, 32051, 32056, 32062, 32067, 32073, 32078, 32084, 32090, 32095, 32101, 32106, 
+    32112, 32118, 32123, 32129, 32134, 32140, 32145, 32151, 32157, 32162, 32168, 32173, 32179, 32184, 32190, 32195, 32201, 32206, 32212, 32218, 32223, 32229, 32234, 32240, 32245, 32251, 32256, 32262, 32267, 32273, 32278, 32284, 
+    32289, 32295, 32300, 32306, 32311, 32317, 32322, 32328, 32333, 32339, 32344, 32350, 32355, 32361, 32366, 32372, 32377, 32383, 32388, 32394, 32399, 32405, 32410, 32416, 32421, 32427, 32432, 32438, 32443, 32449, 32454, 32459, 
+    32465, 32470, 32476, 32481, 32487, 32492, 32498, 32503, 32508, 32514, 32519, 32525, 32530, 32536, 32541, 32546, 32552, 32557, 32563, 32568, 32574, 32579, 32584, 32590, 32595, 32601, 32606, 32611, 32617, 32622, 32628, 32633, 
+    32638, 32644, 32649, 32655, 32660, 32665, 32671, 32676, 32682, 32687, 32692, 32698, 32703, 32708, 32714, 32719, 32725, 32730, 32735, 32741, 32746, 32751, 32757, 32762, 32768, 32773, 32778, 32784, 32789, 32794, 32800, 32805, 
+    32810, 32816, 32821, 32826, 32832, 32837, 32842, 32848, 32853, 32858, 32864, 32869, 32874, 32880, 32885, 32890, 32896, 32901, 32906, 32911, 32917, 32922, 32927, 32933, 32938, 32943, 32949, 32954, 32959, 32964, 32970, 32975, 
+    32980, 32986, 32991, 32996, 33001, 33007, 33012, 33017, 33023, 33028, 33033, 33038, 33044, 33049, 33054, 33059, 33065, 33070, 33075, 33080, 33086, 33091, 33096, 33101, 33107, 33112, 33117, 33122, 33128, 33133, 33138, 33143, 
+    33149, 33154, 33159, 33164, 33169, 33175, 33180, 33185, 33190, 33196, 33201, 33206, 33211, 33216, 33222, 33227, 33232, 33237, 33242, 33248, 33253, 33258, 33263, 33268, 33274, 33279, 33284, 33289, 33294, 33300, 33305, 33310, 
+    33315, 33320, 33325, 33331, 33336, 33341, 33346, 33351, 33357, 33362, 33367, 33372, 33377, 33382, 33387, 33393, 33398, 33403, 33408, 33413, 33418, 33424, 33429, 33434, 33439, 33444, 33449, 33454, 33460, 33465, 33470, 33475, 
+    33480, 33485, 33490, 33495, 33501, 33506, 33511, 33516, 33521, 33526, 33531, 33536, 33542, 33547, 33552, 33557, 33562, 33567, 33572, 33577, 33582, 33587, 33593, 33598, 33603, 33608, 33613, 33618, 33623, 33628, 33633, 33638, 
+    33643, 33648, 33654, 33659, 33664, 33669, 33674, 33679, 33684, 33689, 33694, 33699, 33704, 33709, 33714, 33719, 33724, 33730, 33735, 33740, 33745, 33750, 33755, 33760, 33765, 33770, 33775, 33780, 33785, 33790, 33795, 33800, 
+    33805, 33810, 33815, 33820, 33825, 33830, 33835, 33840, 33845, 33850, 33855, 33860, 33865, 33870, 33875, 33880, 33885, 33890, 33895, 33900, 33905, 33910, 33915, 33920, 33925, 33930, 33935, 33940, 33945, 33950, 33955, 33960, 
+    33965, 33970, 33975, 33980, 33985, 33990, 33995, 34000, 34005, 34010, 34015, 34020, 34025, 34030, 34035, 34040, 34045, 34050, 34055, 34060, 34065, 34070, 34075, 34080, 34085, 34089, 34094, 34099, 34104, 34109, 34114, 34119, 
+    34124, 34129, 34134, 34139, 34144, 34149, 34154, 34159, 34164, 34168, 34173, 34178, 34183, 34188, 34193, 34198, 34203, 34208, 34213, 34218, 34223, 34227, 34232, 34237, 34242, 34247, 34252, 34257, 34262, 34267, 34272, 34276, 
+    34281, 34286, 34291, 34296, 34301, 34306, 34311, 34316, 34320, 34325, 34330, 34335, 34340, 34345, 34350, 34355, 34359, 34364, 34369, 34374, 34379, 34384, 34389, 34393, 34398, 34403, 34408, 34413, 34418, 34423, 34427, 34432, 
+    34437, 34442, 34447, 34452, 34457, 34461, 34466, 34471, 34476, 34481, 34486, 34490, 34495, 34500, 34505, 34510, 34515, 34519, 34524, 34529, 34534, 34539, 34543, 34548, 34553, 34558, 34563, 34568, 34572, 34577, 34582, 34587, 
+    34592, 34596, 34601, 34606, 34611, 34616, 34620, 34625, 34630, 34635, 34640, 34644, 34649, 34654, 34659, 34664, 34668, 34673, 34678, 34683, 34687, 34692, 34697, 34702, 34707, 34711, 34716, 34721, 34726, 34730, 34735, 34740, 
+    34745, 34749, 34754, 34759, 34764, 34768, 34773, 34778, 34783, 34787, 34792, 34797, 34802, 34806, 34811, 34816, 34821, 34825, 34830, 34835, 34840, 34844, 34849, 34854, 34859, 34863, 34868, 34873, 34878, 34882, 34887, 34892, 
+    34896, 34901, 34906, 34911, 34915, 34920, 34925, 34929, 34934, 34939, 34944, 34948, 34953, 34958, 34962, 34967, 34972, 34976, 34981, 34986, 34991, 34995, 35000, 35005, 35009, 35014, 35019, 35023, 35028, 35033, 35037, 35042, 
+    35047, 35051, 35056, 35061, 35066, 35070, 35075, 35080, 35084, 35089, 35094, 35098, 35103, 35108, 35112, 35117, 35122, 35126, 35131, 35136, 35140, 35145, 35149, 35154, 35159, 35163, 35168, 35173, 35177, 35182, 35187, 35191, 
+    35196, 35201, 35205, 35210, 35215, 35219, 35224, 35228, 35233, 35238, 35242, 35247, 35252, 35256, 35261, 35265, 35270, 35275, 35279, 35284, 35289, 35293, 35298, 35302, 35307, 35312, 35316, 35321, 35325, 35330, 35335, 35339, 
+    35344, 35348, 35353, 35358, 35362, 35367, 35371, 35376, 35381, 35385, 35390, 35394, 35399, 35404, 35408, 35413, 35417, 35422, 35426, 35431, 35436, 35440, 35445, 35449, 35454, 35459, 35463, 35468, 35472, 35477, 35481, 35486, 
+    35491, 35495, 35500, 35504, 35509, 35513, 35518, 35522, 35527, 35532, 35536, 35541, 35545, 35550, 35554, 35559, 35563, 35568, 35572, 35577, 35582, 35586, 35591, 35595, 35600, 35604, 35609, 35613, 35618, 35622, 35627, 35631, 
+    35636, 35640, 35645, 35650, 35654, 35659, 35663, 35668, 35672, 35677, 35681, 35686, 35690, 35695, 35699, 35704, 35708, 35713, 35717, 35722, 35726, 35731, 35735, 35740, 35744, 35749, 35753, 35758, 35762, 35767, 35771, 35776, 
+    35780, 35785, 35789, 35794, 35798, 35803, 35807, 35812, 35816, 35821, 35825, 35830, 35834, 35839, 35843, 35847, 35852, 35856, 35861, 35865, 35870, 35874, 35879, 35883, 35888, 35892, 35897, 35901, 35906, 35910, 35914, 35919, 
+    35923, 35928, 35932, 35937, 35941, 35946, 35950, 35955, 35959, 35963, 35968, 35972, 35977, 35981, 35986, 35990, 35994, 35999, 36003, 36008, 36012, 36017, 36021, 36026, 36030, 36034, 36039, 36043, 36048, 36052, 36057, 36061, 
+    36065, 36070, 36074, 36079, 36083, 36087, 36092, 36096, 36101, 36105, 36109, 36114, 36118, 36123, 36127, 36132, 36136, 36140, 36145, 36149, 36154, 36158, 36162, 36167, 36171, 36176, 36180, 36184, 36189, 36193, 36197, 36202, 
+    36206, 36211, 36215, 36219, 36224, 36228, 36233, 36237, 36241, 36246, 36250, 36254, 36259, 36263, 36268, 36272, 36276, 36281, 36285, 36289, 36294, 36298, 36302, 36307, 36311, 36316, 36320, 36324, 36329, 36333, 36337, 36342, 
+    36346, 36350, 36355, 36359, 36363, 36368, 36372, 36376, 36381, 36385, 36389, 36394, 36398, 36403, 36407, 36411, 36416, 36420, 36424, 36429, 36433, 36437, 36442, 36446, 36450, 36455, 36459, 36463, 36467, 36472, 36476, 36480, 
+    36485, 36489, 36493, 36498, 36502, 36506, 36511, 36515, 36519, 36524, 36528, 36532, 36537, 36541, 36545, 36549, 36554, 36558, 36562, 36567, 36571, 36575, 36580, 36584, 36588, 36592, 36597, 36601, 36605, 36610, 36614, 36618, 
+    36622, 36627, 36631, 36635, 36640, 36644, 36648, 36652, 36657, 36661, 36665, 36670, 36674, 36678, 36682, 36687, 36691, 36695, 36699, 36704, 36708, 36712, 36717, 36721, 36725, 36729, 36734, 36738, 36742, 36746, 36751, 36755, 
+    36759, 36763, 36768, 36772, 36776, 36780, 36785, 36789, 36793, 36797, 36802, 36806, 36810, 36814, 36819, 36823, 36827, 36831, 36836, 36840, 36844, 36848, 36852, 36857, 36861, 36865, 36869, 36874, 36878, 36882, 36886, 36891, 
+    36895, 36899, 36903, 36907, 36912, 36916, 36920, 36924, 36928, 36933, 36937, 36941, 36945, 36950, 36954, 36958, 36962, 36966, 36971, 36975, 36979, 36983, 36987, 36992, 36996, 37000, 37004, 37008, 37013, 37017, 37021, 37025, 
+    37029, 37034, 37038, 37042, 37046, 37050, 37055, 37059, 37063, 37067, 37071, 37075, 37080, 37084, 37088, 37092, 37096, 37101, 37105, 37109, 37113, 37117, 37121, 37126, 37130, 37134, 37138, 37142, 37146, 37151, 37155, 37159, 
+    37163, 37167, 37171, 37176, 37180, 37184, 37188, 37192, 37196, 37201, 37205, 37209, 37213, 37217, 37221, 37225, 37230, 37234, 37238, 37242, 37246, 37250, 37254, 37259, 37263, 37267, 37271, 37275, 37279, 37283, 37288, 37292, 
+    37296, 37300, 37304, 37308, 37312, 37316, 37321, 37325, 37329, 37333, 37337, 37341, 37345, 37349, 37354, 37358, 37362, 37366, 37370, 37374, 37378, 37382, 37387, 37391, 37395, 37399, 37403, 37407, 37411, 37415, 37419, 37423, 
+    37428, 37432, 37436, 37440, 37444, 37448, 37452, 37456, 37460, 37464, 37469, 37473, 37477, 37481, 37485, 37489, 37493, 37497, 37501, 37505, 37509, 37514, 37518, 37522, 37526, 37530, 37534, 37538, 37542, 37546, 37550, 37554
+};
+
+static unsigned short _rgbGammaTab[256] = {
+    0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 6, 6, 7, 8, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 
+    29, 31, 32, 34, 35, 37, 39, 41, 43, 45, 47, 49, 51, 53, 55, 57, 60, 62, 65, 67, 70, 72, 75, 77, 80, 83, 86, 89, 92, 95, 98, 101, 
+    104, 107, 111, 114, 117, 121, 124, 128, 132, 135, 139, 143, 147, 151, 155, 159, 163, 167, 172, 176, 180, 185, 189, 194, 199, 203, 208, 213, 218, 223, 228, 233, 
+    238, 243, 249, 254, 259, 265, 271, 276, 282, 288, 294, 299, 305, 311, 318, 324, 330, 336, 343, 349, 356, 362, 369, 376, 383, 390, 397, 404, 411, 418, 425, 432, 
+    440, 447, 455, 463, 470, 478, 486, 494, 502, 510, 518, 526, 534, 543, 551, 560, 568, 577, 586, 595, 604, 613, 622, 631, 640, 649, 659, 668, 678, 687, 697, 707, 
+    717, 727, 737, 747, 757, 767, 777, 788, 798, 809, 820, 830, 841, 852, 863, 874, 885, 896, 908, 919, 931, 942, 954, 966, 977, 989, 1001, 1013, 1025, 1038, 1050, 1062, 
+    1075, 1087, 1100, 1113, 1126, 1139, 1152, 1165, 1178, 1191, 1204, 1218, 1231, 1245, 1259, 1272, 1286, 1300, 1314, 1328, 1343, 1357, 1371, 1386, 1400, 1415, 1430, 1445, 1460, 1475, 1490, 1505, 
+    1520, 1536, 1551, 1567, 1582, 1598, 1614, 1630, 1646, 1662, 1678, 1694, 1711, 1727, 1744, 1760, 1777, 1794, 1811, 1828, 1845, 1862, 1880, 1897, 1914, 1932, 1950, 1967, 1985, 2003, 2021, 2040
+};
+
+static int _coeffs[9] = {
+    778, 1541, 1777, 296, 2929, 871, 3575, 448, 73
+};
+
+#define COLOR_DESCALE(x, n) (((x) + (1 << ((n) - 1))) >> (n))
+#define COLOR_CAST_8U(t)    (!((t) & ~255) ? (t) : (t) > 0 ? 255 : 0)
+
+void bgr2lab(const unsigned char src[3], unsigned char dst[3]) {
+    const int lab_shift  = 12;
+    const int lab_shift2 = 15;
+    const int Lscale = 296;
+    const int Lshift = -1336934;
+    const unsigned short *tab = _rgbGammaTab;
+    
+    int C0 = _coeffs[0], C1 = _coeffs[1], C2 = _coeffs[2],
+        C3 = _coeffs[3], C4 = _coeffs[4], C5 = _coeffs[5],
+        C6 = _coeffs[6], C7 = _coeffs[7], C8 = _coeffs[8];
+    
+    int R  = _rgbGammaTab[ src[0] ], G = _rgbGammaTab[ src[1] ], B = _rgbGammaTab[ src[2] ];
+    int fX = _labCubeRootTab[COLOR_DESCALE(R*C0 + G*C1 + B*C2, lab_shift)];
+    int fY = _labCubeRootTab[COLOR_DESCALE(R*C3 + G*C4 + B*C5, lab_shift)];
+    int fZ = _labCubeRootTab[COLOR_DESCALE(R*C6 + G*C7 + B*C8, lab_shift)];
+    
+    int L = COLOR_DESCALE( Lscale*fY + Lshift, lab_shift2 );
+    int a = COLOR_DESCALE( 500*(fX - fY) + 128*(1 << lab_shift2), lab_shift2 );
+    int b = COLOR_DESCALE( 200*(fY - fZ) + 128*(1 << lab_shift2), lab_shift2 );
+
+    dst[0] = COLOR_CAST_8U(L);
+    dst[1] = COLOR_CAST_8U(a);
+    dst[2] = COLOR_CAST_8U(b);
+}
+
+void TurnLAB(ImageData* image) {
+  int height = image->GetHeight();
+  int width = image->GetWidth();
+  for (int y = 0; y < height; ++y) {
+    for (int x  = 0; x < width; ++x) {
+      int index = y * width + x;
+      int col[3] = GET_THREE_COORDINATE(image->GetPixel(index));
+      unsigned char col_c[3];
+      col_c[0] = static_cast<unsigned char>(col[0]);
+      col_c[1] = static_cast<unsigned char>(col[1]);
+      col_c[2] = static_cast<unsigned char>(col[2]);
+      unsigned char lab[3];
+      bgr2lab(col_c, lab);
+      int colour = TURN_COORDINATE_TO_COLOUR(
+        static_cast<int>(lab[0]), static_cast<int>(lab[1]), static_cast<int>(lab[2]));
+      image->SetPixel(index, colour);
+    }
+  }
+}
 }  // namespace utils
 
